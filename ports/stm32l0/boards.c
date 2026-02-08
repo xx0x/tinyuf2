@@ -49,18 +49,20 @@ void board_init(void)
 
   GPIO_InitTypeDef  GPIO_InitStruct;
 
-#ifdef BUTTON_PIN
+#if defined(BUTTON_PIN) && defined(BUTTON_PORT) && defined(BUTTON_STATE_ACTIVE)
   GPIO_InitStruct.Pin = BUTTON_PIN;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+#if BUTTON_STATE_ACTIVE == 0
   GPIO_InitStruct.Pull = GPIO_PULLUP;
+#endif
   GPIO_InitStruct.Speed = GPIO_SPEED_FAST;
   HAL_GPIO_Init(BUTTON_PORT, &GPIO_InitStruct);
 #endif
 
-#ifdef LED_PIN
+#if defined(LED_PIN) && defined(LED_PORT)
   GPIO_InitStruct.Pin = LED_PIN;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FAST;
   HAL_GPIO_Init(LED_PORT, &GPIO_InitStruct);
   board_led_write(0);
@@ -72,7 +74,7 @@ void board_dfu_init(void)
 {
   GPIO_InitTypeDef  GPIO_InitStruct;
 
-  // USB Pin Init
+  // USB Pins Init
   GPIO_InitStruct.Pin = GPIO_PIN_11 | GPIO_PIN_12;
   GPIO_InitStruct.Speed = GPIO_SPEED_HIGH;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -94,8 +96,22 @@ void board_dfu_complete(void)
   NVIC_SystemReset();
 }
 
+uint32_t board_button_read(void) {
+  #if defined(BUTTON_PIN) && defined(BUTTON_PORT) && defined(BUTTON_STATE_ACTIVE)
+  return BUTTON_STATE_ACTIVE == HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_PIN);
+  #else 
+  return 0;
+  #endif
+}
+
 bool board_app_valid(void)
 {
+  // Stay in bootloader if button pressed
+  if(board_button_read()){
+    return false;
+  }
+
+  // Load vector table
   volatile uint32_t const * app_vector = (volatile uint32_t const*) BOARD_FLASH_APP_START;
   uint32_t sp = app_vector[0];
   uint32_t app_entry = app_vector[1];
@@ -120,11 +136,11 @@ void board_app_jump(void)
   uint32_t sp = app_vector[0];
   uint32_t app_entry = app_vector[1];
 
-#ifdef BUTTON_PIN
+#if defined(BUTTON_PIN) && defined(BUTTON_PORT)
   HAL_GPIO_DeInit(BUTTON_PORT, BUTTON_PIN);
 #endif
 
-#ifdef LED_PIN
+#if defined(LED_PIN) && defined(LED_PORT)
   HAL_GPIO_DeInit(LED_PORT, LED_PIN);
 #endif
 
@@ -170,7 +186,11 @@ uint8_t board_usb_get_serial(uint8_t serial_id[16])
 
 void board_led_write(uint32_t state)
 {
+#ifdef LED_PIN
   HAL_GPIO_WritePin(LED_PORT, LED_PIN, state ? LED_STATE_ON : (1 - LED_STATE_ON));
+#else
+  (void) state;
+#endif
 }
 
 void board_rgb_write(uint8_t const rgb[])
