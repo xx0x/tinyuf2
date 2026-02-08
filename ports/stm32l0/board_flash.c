@@ -45,26 +45,34 @@ static bool is_blank(uint32_t addr, uint32_t size)
   return true;
 }
 
-static bool flash_erase(uint32_t addr)
+static bool flash_erase(uint32_t start_page, uint32_t end_page)
 {
-  // Calculate which page contains this address
-  uint32_t page_addr = addr & ~(BOARD_PAGE_SIZE - 1);  // Align to page boundary
-  uint32_t page_index = (page_addr - FLASH_BASE_ADDR) / BOARD_PAGE_SIZE;
+  // Calculate page indices
+  uint32_t start_page_index = (start_page - FLASH_BASE_ADDR) / BOARD_PAGE_SIZE;
+  uint32_t end_page_index = (end_page - FLASH_BASE_ADDR) / BOARD_PAGE_SIZE;
+  uint32_t num_pages = end_page_index - start_page_index + 1;
 
-  // Check if already erased
-  if (erased_pages[page_index]) {
+  // Check if all pages in the range are already erased
+  bool all_erased = true;
+  for (uint32_t i = start_page_index; i <= end_page_index; i++) {
+    if (!erased_pages[i]) {
+      all_erased = false;
+      break;
+    }
+  }
+  if (all_erased) {
     return true;
   }
 
-  // Check if page is blank
-  if (!is_blank(page_addr, BOARD_PAGE_SIZE)) {
-
+  // Check if the entire range is blank
+  uint32_t total_size = (end_page - start_page) + BOARD_PAGE_SIZE;
+  if (!is_blank(start_page, total_size)) {
     FLASH_EraseInitTypeDef EraseInit = {};
     EraseInit.TypeErase = TYPEERASE_PAGES;
-    EraseInit.PageAddress = page_addr;
-    EraseInit.NbPages = 1;
+    EraseInit.PageAddress = start_page;
+    EraseInit.NbPages = num_pages;
 
-    // erase the page
+    // Erase all pages at once
     uint32_t PageError = 0;
     HAL_StatusTypeDef status = HAL_FLASHEx_Erase(&EraseInit, &PageError);
     if (status != HAL_OK) {
@@ -77,7 +85,11 @@ static bool flash_erase(uint32_t addr)
     }
   }
 
-  erased_pages[page_index] = 1;
+  // Mark all pages as erased
+  for (uint32_t i = start_page_index; i <= end_page_index; i++) {
+    erased_pages[i] = 1;
+  }
+
   return true;
 }
 
@@ -87,27 +99,23 @@ static void flash_write(uint32_t dst, const uint8_t *src, int len)
   uint32_t start_page = dst & ~(BOARD_PAGE_SIZE - 1);
   uint32_t end_page = (dst + len - 1) & ~(BOARD_PAGE_SIZE - 1);
   
-  for (uint32_t page = start_page; page <= end_page; page += BOARD_PAGE_SIZE) {
-    flash_erase(page);
-  }
+  flash_erase(start_page, end_page);
 
-  // Write in 32-bit words only, ensuring proper alignment
+  // Write in 32-bit words - data is 4-byte aligned per UF2 spec
   for (int i = 0; i < len; i += 4)
   {
-    uint32_t word;
-    
-    // Always write complete 32-bit words, padding with 0xFF if needed
-    if (i + 4 <= len) {
-      memcpy(&word, src + i, 4);
-    } else {
-      word = 0xFFFFFFFF;
-      memcpy(&word, src + i, len - i);
-    }
-
-    if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, dst + i, word) != HAL_OK) {
+    uint32_t data = *((uint32_t*) ((void*) (src + i)));
+    if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, dst + i, data) != HAL_OK) {
       return; 
     }
-    FLASH_WaitForLastOperation(HAL_MAX_DELAY);
+    if(FLASH_WaitForLastOperation(HAL_MAX_DELAY) != HAL_OK) {
+      return;
+    }
+  }
+
+  // Verify contents
+  if (memcmp((void*) dst, src, len) != 0) {
+    TUF2_LOG1("Failed to write\r\n");
   }
 }
 
@@ -134,11 +142,7 @@ void board_flash_flush(void)
 }
 
 bool board_flash_write(uint32_t addr, void const* data, uint32_t len)
-{
-  if (addr < BOARD_FLASH_APP_START) {
-    return false; // Don't overwrite bootloader
-  }
-  
+{  
   HAL_StatusTypeDef status = HAL_FLASH_Unlock();
   if (status != HAL_OK) {
     return false;
@@ -147,9 +151,7 @@ bool board_flash_write(uint32_t addr, void const* data, uint32_t len)
   flash_write(addr, data, len);
   
   HAL_FLASH_Lock();
-  
-  // Simple verification
-  return (memcmp((void*)addr, data, len) == 0);
+  return true;
 }
 
 void board_flash_erase_app(void)

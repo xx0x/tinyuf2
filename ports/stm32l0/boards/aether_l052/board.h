@@ -35,8 +35,8 @@
 
 // FLASH
 
-// Flash size of the board (64kB - 16kB bootloader = 48 kB)
-#define BOARD_FLASH_SIZE  (48 * 1024)
+// Flash size of the board (all 64kB including the 16kB bootloader)
+#define BOARD_FLASH_SIZE  (64 * 1024)
 
 // USB
 
