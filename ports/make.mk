@@ -107,7 +107,6 @@ SRC_C += \
 	$(TINYUSB_DIR)/tusb.c \
 	$(TINYUSB_DIR)/common/tusb_fifo.c \
 	$(TINYUSB_DIR)/device/usbd.c \
-	$(TINYUSB_DIR)/device/usbd_control.c \
 	$(TINYUSB_DIR)/class/cdc/cdc_device.c \
 	$(TINYUSB_DIR)/class/dfu/dfu_rt_device.c \
 	$(TINYUSB_DIR)/class/hid/hid_device.c \
@@ -165,6 +164,12 @@ CFLAGS += \
   -Wmissing-format-attribute \
   -Wunreachable-code \
   -Wcast-align
+
+# src/main.c still calls tud_init(), which recent TinyUSB deprecates in favour of
+# tusb_init(rhport, rh_init). It remains a working compatibility wrapper, and the
+# CMake based ports build against a TinyUSB that predates the replacement, so keep
+# the call and only downgrade the warning.
+CFLAGS += -Wno-error=deprecated-declarations
 
 # Linker Flags
 LDFLAGS += \

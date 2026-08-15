@@ -162,6 +162,12 @@
 | teensy40 | PJRC Teensy 4.0 | 0x239A:0x0085 | https://www.pjrc.com/store/teensy40.html |
 | teensy41 | PJRC Teensy 4.1 | 0x239A:0x00AD | https://www.pjrc.com/store/teensy41.html |
 
+## py32f0
+
+| Board | Name | VID PID | URL |
+| --- | --- | --- | --- |
+| badger_py32f071 | Badger PY32F071 | 0xF055:0xBA71 | https://github.com/xx0x/badger-py32f071 |
+
 ## stm32f3
 
 | Board | Name | VID PID | URL |
