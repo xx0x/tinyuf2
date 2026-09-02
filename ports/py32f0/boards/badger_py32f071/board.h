@@ -29,14 +29,14 @@
 // LED
 
 #define LED_PORT              GPIOA
-#define LED_PIN               GPIO_PIN_8
+#define LED_PIN               GPIO_PIN_9
 #define LED_STATE_ON          1
 
 // BUTTON
 // Held low on startup to force the bootloader
 
-#define BUTTON_PORT           GPIOB
-#define BUTTON_PIN            GPIO_PIN_12
+#define BUTTON_PORT           GPIOC
+#define BUTTON_PIN            GPIO_PIN_14
 #define BUTTON_STATE_ACTIVE   0
 
 // FLASH
@@ -49,14 +49,14 @@
 #define USB_VID           0xf055
 #define USB_PID           0xba71
 #define USB_MANUFACTURER  "xx0x"
-#define USB_PRODUCT       "Badger PY32F071"
+#define USB_PRODUCT       "BadgerBoot"
 
 // UF2
 
 #define UF2_PRODUCT_NAME  USB_PRODUCT
-#define UF2_BOARD_ID      "PY32F071-Badger_PY32F071-v1"
+#define UF2_BOARD_ID      "Badger_PY32F071"
 #define UF2_VOLUME_LABEL  "BADGERBOOT"
-#define UF2_INDEX_URL     "https://github.com/xx0x/badger-py32f071"
+#define UF2_INDEX_URL     "https://github.com/xx0x/badger"
 
 // UART is not available (won't fit into the 16 kB bootloader)
 

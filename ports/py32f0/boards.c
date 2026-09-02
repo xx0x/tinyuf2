@@ -46,24 +46,16 @@ void board_init(void)
 
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
 
+  
+  #if defined(BUTTON_PIN) && defined(BUTTON_PORT) && defined(BUTTON_STATE_ACTIVE)
   GPIO_InitTypeDef  GPIO_InitStruct;
-
-#if defined(BUTTON_PIN) && defined(BUTTON_PORT) && defined(BUTTON_STATE_ACTIVE)
   GPIO_InitStruct.Pin = BUTTON_PIN;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = (BUTTON_STATE_ACTIVE == 0) ? GPIO_PULLUP : GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(BUTTON_PORT, &GPIO_InitStruct);
-#endif
-
-#if defined(LED_PIN) && defined(LED_PORT)
-  GPIO_InitStruct.Pin = LED_PIN;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(LED_PORT, &GPIO_InitStruct);
-  board_led_write(0);
 #endif
 
 }
@@ -75,6 +67,16 @@ void board_dfu_init(void)
   __HAL_RCC_SYSCFG_CLK_ENABLE();
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_RCC_USB_CLK_ENABLE();
+
+#if defined(LED_PIN) && defined(LED_PORT)
+  GPIO_InitTypeDef  GPIO_InitStruct;
+  GPIO_InitStruct.Pin = LED_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(LED_PORT, &GPIO_InitStruct);
+  board_led_write(0);
+#endif
 }
 
 void board_reset(void)
@@ -137,6 +139,7 @@ void board_app_jump(void)
 
   __HAL_RCC_GPIOA_CLK_DISABLE();
   __HAL_RCC_GPIOB_CLK_DISABLE();
+  __HAL_RCC_GPIOC_CLK_DISABLE();
 
   HAL_RCC_DeInit();
 
