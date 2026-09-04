@@ -67,15 +67,79 @@
 
 #define FLASH_APP_END     (BOARD_FLASH_ADDR_ZERO + BOARD_FLASH_SIZE)
 
+/* What an erased word reads back as.
+ *
+ * Zero, not all ones. The L0 NVM is not NOR flash and does not erase to 0xFF -
+ * a freshly erased page reads 0x00000000, which is also what a mass erase
+ * leaves behind. Getting this backwards is worse than it looks: a page holding
+ * 0xFFFFFFFF is then mistaken for an erased one, the erase before programming
+ * is skipped, and the half page program lands on cells that were never erased
+ * and fails. The page keeps its 0xFF, is mistaken for blank again on the next
+ * attempt, and no amount of re-flashing can ever repair it - only a mass erase
+ * from a debug probe, which writes zeros and puts it back in reach.
+ *
+ * Which matters because 0xFF is exactly what a half page program that was
+ * abandoned part way leaves behind. One aborted write therefore turns into a
+ * hole in the image that is permanent from the bootloader's side.
+ */
+#define FLASH_ERASED_WORD (0x00000000UL)
+
+// Attempts at a page before giving up on it. Retrying is worth doing because
+// nothing upstream can: ghostfat.c discards the result of board_flash_write, so
+// a page given up on here becomes a hole in the image that no one is told about
+// - the copy appears to succeed and the board simply comes up wrong.
+#define FLASH_WRITE_ATTEMPTS (3U)
+
 //--------------------------------------------------------------------+
 // Low level NVM access
 //--------------------------------------------------------------------+
+
+/* Wait for the NVM to report this operation finished.
+ *
+ * Polls for EOP rather than only for BSY to fall. BSY is not asserted the
+ * instant the last word of a half page is written - the NVM takes a few cycles
+ * to start the high voltage cycle - so a loop that only waits for BSY to be
+ * clear can fall straight through before the operation has even begun. It then
+ * sees no error, and the caller clears FPRG while the write is still pending,
+ * which abandons the half page silently: it reads back erased and nothing says
+ * so. EOP can only be set by an operation that actually completed, so waiting
+ * on it cannot race the start of one.
+ *
+ * @return 0 when the operation completed, otherwise the error bits, or the full
+ *         error mask if the NVM never reported anything at all.
+ */
+__attribute__((always_inline))
+static inline uint32_t flash_wait_eop(volatile uint32_t* sr)
+{
+  for ( uint32_t timeout = FLASH_BSY_TIMEOUT; timeout; timeout-- )
+  {
+    uint32_t const status = *sr;
+
+    if ( status & FLASH_ERROR_MASK ) return status & FLASH_ERROR_MASK;
+    if ( (status & FLASH_SR_EOP) && !(status & FLASH_SR_BSY) ) return 0;
+  }
+
+  return FLASH_ERROR_MASK;
+}
+
+/* Wait for whatever came before to finish, so a new operation starts on an idle
+ * NVM. The reference sequence opens with this and so does the HAL. */
+__attribute__((always_inline))
+static inline uint32_t flash_wait_idle(volatile uint32_t* sr)
+{
+  for ( uint32_t timeout = FLASH_BSY_TIMEOUT; timeout; timeout-- )
+  {
+    if ( !(*sr & FLASH_SR_BSY) ) return 0;
+  }
+
+  return FLASH_ERROR_MASK;
+}
 
 static bool is_blank(uint32_t addr, uint32_t size)
 {
   for ( uint32_t i = 0; i < size; i += sizeof(uint32_t) )
   {
-    if ( *(volatile uint32_t*) (addr + i) != 0xffffffffUL ) return false;
+    if ( *(volatile uint32_t*) (addr + i) != FLASH_ERASED_WORD ) return false;
   }
   return true;
 }
@@ -120,25 +184,32 @@ uint32_t flash_program_half_page(uint32_t addr, uint32_t const* src)
   volatile uint32_t* const pecr = &FLASH->PECR;
   volatile uint32_t* const sr   = &FLASH->SR;
   uint32_t words = BOARD_HALF_PAGE_SIZE / sizeof(uint32_t);
-  uint32_t timeout = FLASH_BSY_TIMEOUT;
   uint32_t status;
 
   __disable_irq();
 
-  *pecr |= (FLASH_PECR_FPRG | FLASH_PECR_PROG);
+  status = flash_wait_idle(sr);
 
-  // 16 back to back word writes to the same address, the NVM walks the half
-  // page internally
-  while ( words-- ) *dst = *src++;
+  if ( status == 0 )
+  {
+    // rc_w1. EOP has to start clear, or the wait below would be satisfied by
+    // the previous operation's flag and return before this one has run.
+    *sr = FLASH_SR_EOP | FLASH_ERROR_MASK;
 
-  while ( (*sr & FLASH_SR_BSY) && timeout ) timeout--;
-  status = *sr;
+    *pecr |= (FLASH_PECR_FPRG | FLASH_PECR_PROG);
 
-  *pecr &= ~(FLASH_PECR_FPRG | FLASH_PECR_PROG);
+    // 16 back to back word writes to the same address, the NVM walks the half
+    // page internally
+    while ( words-- ) *dst = *src++;
+
+    status = flash_wait_eop(sr);
+
+    *pecr &= ~(FLASH_PECR_FPRG | FLASH_PECR_PROG);
+  }
 
   __enable_irq();
 
-  return timeout ? status : FLASH_ERROR_MASK;
+  return status;
 }
 
 /* Erase one 128-byte page. Runs from RAM for the dual bank reason above. */
@@ -148,24 +219,29 @@ uint32_t flash_erase_page_ram(uint32_t addr)
   volatile uint32_t* const dst  = (volatile uint32_t*) addr;
   volatile uint32_t* const pecr = &FLASH->PECR;
   volatile uint32_t* const sr   = &FLASH->SR;
-  uint32_t timeout = FLASH_BSY_TIMEOUT;
   uint32_t status;
 
   __disable_irq();
 
-  *pecr |= (FLASH_PECR_ERASE | FLASH_PECR_PROG);
+  status = flash_wait_idle(sr);
 
-  // erasing is triggered by writing zero anywhere in the page
-  *dst = 0x00000000UL;
+  if ( status == 0 )
+  {
+    *sr = FLASH_SR_EOP | FLASH_ERROR_MASK;   // rc_w1
 
-  while ( (*sr & FLASH_SR_BSY) && timeout ) timeout--;
-  status = *sr;
+    *pecr |= (FLASH_PECR_ERASE | FLASH_PECR_PROG);
 
-  *pecr &= ~(FLASH_PECR_ERASE | FLASH_PECR_PROG);
+    // erasing is triggered by writing zero anywhere in the page
+    *dst = 0x00000000UL;
+
+    status = flash_wait_eop(sr);
+
+    *pecr &= ~(FLASH_PECR_ERASE | FLASH_PECR_PROG);
+  }
 
   __enable_irq();
 
-  return timeout ? status : FLASH_ERROR_MASK;
+  return status;
 }
 
 static bool flash_erase_page(uint32_t addr)
@@ -195,22 +271,31 @@ static bool flash_write_page(uint32_t page, uint32_t offset, uint8_t const* src,
    * without tracking which pages have already been erased. */
   if ( memcmp(buf, (void const*) page, BOARD_PAGE_SIZE) == 0 ) return true;
 
-  if ( !is_blank(page, BOARD_PAGE_SIZE) && !flash_erase_page(page) ) return false;
-
-  FLASH->SR = FLASH_ERROR_MASK;
-
-  for ( uint32_t i = 0; i < BOARD_PAGE_SIZE / sizeof(uint32_t); i += BOARD_HALF_PAGE_SIZE / sizeof(uint32_t) )
+  for ( uint32_t attempt = 0; attempt < FLASH_WRITE_ATTEMPTS; attempt++ )
   {
-    uint32_t const status = flash_program_half_page(page + i * sizeof(uint32_t), buf + i);
+    if ( !is_blank(page, BOARD_PAGE_SIZE) && !flash_erase_page(page) ) continue;
 
-    if ( status & FLASH_ERROR_MASK )
+    FLASH->SR = FLASH_ERROR_MASK;
+
+    bool programmed = true;
+
+    for ( uint32_t i = 0; i < BOARD_PAGE_SIZE / sizeof(uint32_t); i += BOARD_HALF_PAGE_SIZE / sizeof(uint32_t) )
     {
-      FLASH->SR = FLASH_ERROR_MASK;
-      return false;
+      if ( flash_program_half_page(page + i * sizeof(uint32_t), buf + i) & FLASH_ERROR_MASK )
+      {
+        FLASH->SR = FLASH_ERROR_MASK;
+        programmed = false;
+        break;
+      }
     }
+
+    // Read back either way. A half page that was abandoned rather than refused
+    // reports no error at all, so the comparison is the only thing that can
+    // tell the difference between written and merely attempted.
+    if ( programmed && memcmp(buf, (void const*) page, BOARD_PAGE_SIZE) == 0 ) return true;
   }
 
-  return memcmp(buf, (void const*) page, BOARD_PAGE_SIZE) == 0;
+  return false;
 }
 
 //--------------------------------------------------------------------+
